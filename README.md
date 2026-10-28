@@ -35,7 +35,7 @@ clicks together with mouse movement. Includes a light and a dark theme.
 ## Build and run
 
 ```powershell
-git clone https://github.com/<your-user>/simple-autoclicker.git
+git clone https://github.com/fay9to/simple-autoclicker.git
 cd simple-autoclicker
 dotnet build -c Release
 .\bin\Release\net9.0-windows\SimpleAutoClicker.exe
