@@ -109,8 +109,7 @@ The app stores its settings in:
 ```
 
 It keeps the chosen theme, the hotkeys and the two minimize options. Delete the file to
-return to the defaults. No other data is written to disk. The format matches the earlier
-WinForms build in `csharp/`, so an existing settings file keeps working.
+return to the defaults. No other data is written to disk.
 
 ## Project layout
 
@@ -131,18 +130,6 @@ WinForms build in `csharp/`, so an existing settings file keeps working.
 | `src/dialogs.rs` | hotkey dialogs, pick-location countdown, message dialogs |
 | `src/settings.rs` | settings file |
 | `src/keys.rs` | virtual-key names and conversions |
-
-## Legacy C# implementation
-
-The original Windows Forms implementation this project replicates is kept in
-`csharp/` for reference. It targets .NET 9 and can still be built separately:
-
-```powershell
-cd csharp
-dotnet build -c Release
-```
-
-Screenshots of that build are in `docs/csharp/`.
 
 ## Notes
 

@@ -1,3 +1,7 @@
+// Release builds are GUI applications: no console window when started from
+// Explorer or another launcher. Debug builds keep the console for logs.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod dialogs;
 mod engine;
