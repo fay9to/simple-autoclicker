@@ -11,7 +11,9 @@ use eframe::egui::{
 use crate::i18n::{self, Key as Text, Lang};
 use crate::keys::{key_name, key_to_vk};
 use crate::native;
-use crate::theme::{fade, font_body, font_caption, font_semibold, soft_shadow, Palette, RADIUS_CARD};
+use crate::theme::{
+    fade, font_body, font_caption, font_semibold, glow, soft_shadow, Palette, RADIUS_CARD,
+};
 use crate::widgets::{self, BtnStyle};
 
 pub enum Dialog {
@@ -45,6 +47,7 @@ pub enum DialogEvent {
 
 fn panel(painter: &eframe::egui::Painter, rect: Rect, p: &Palette, accent: Color32) {
     soft_shadow(painter, rect, RADIUS_CARD, p.shadow, 22.0, 8.0);
+    glow(painter, rect, RADIUS_CARD, accent, 0.12);
     painter.rect_filled(rect, CornerRadius::same(RADIUS_CARD), p.popup);
     painter.rect_stroke(
         rect,
@@ -53,17 +56,12 @@ fn panel(painter: &eframe::egui::Painter, rect: Rect, p: &Palette, accent: Color
         StrokeKind::Inside,
     );
 
-    let strip = Rect::from_min_max(rect.min, Pos2::new(rect.right(), rect.top() + 3.0));
-    painter.rect_filled(
-        strip,
-        CornerRadius {
-            nw: RADIUS_CARD,
-            ne: RADIUS_CARD,
-            sw: 0,
-            se: 0,
-        },
-        accent,
+    // Thin accent line under the top edge, kept clear of the rounded corners.
+    let strip = Rect::from_min_max(
+        Pos2::new(rect.left() + 24.0, rect.top() + 0.5),
+        Pos2::new(rect.right() - 24.0, rect.top() + 3.5),
     );
+    painter.rect_filled(strip, CornerRadius::same(2), fade(accent, 0.9));
 }
 
 fn title(painter: &eframe::egui::Painter, pos: Pos2, text: &str, p: &Palette) {

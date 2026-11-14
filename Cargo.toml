@@ -26,6 +26,10 @@ windows = { version = "0.62", features = [
 [build-dependencies]
 winres = "0.1"
 
+[features]
+# Renders the screenshots for docs/ offscreen (see src/app/shots.rs).
+docs-shots = []
+
 [profile.release]
 opt-level = 3
 lto = true

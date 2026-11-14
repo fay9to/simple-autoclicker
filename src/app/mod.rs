@@ -3,6 +3,8 @@
 mod advanced_screen;
 mod main_screen;
 mod menus;
+#[cfg(feature = "docs-shots")]
+mod shots;
 
 use std::time::{Duration, Instant};
 
@@ -89,6 +91,9 @@ pub struct App {
 
     pub rec: Recorder,
     pub adv_keys_registered: bool,
+
+    #[cfg(feature = "docs-shots")]
+    pub shots: Option<shots::Shots>,
 }
 
 impl App {
@@ -149,6 +154,12 @@ impl App {
             screen_since: now,
             rec: Recorder::new(),
             adv_keys_registered: false,
+            #[cfg(feature = "docs-shots")]
+            shots: if std::env::var_os("SAC_SHOT_DIR").is_some() {
+                Some(shots::Shots::new())
+            } else {
+                None
+            },
         }
     }
 
@@ -721,6 +732,13 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(80));
 
+        // A hidden (e.g. occluded) window is normally not painted; the
+        // screenshot mode needs every frame to run.
+        #[cfg(feature = "docs-shots")]
+        if self.shots_active() {
+            ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+        }
+
         self.poll_state();
         self.handle_hotkeys(ctx);
 
@@ -771,6 +789,9 @@ impl eframe::App for App {
         if let Some(event) = dialog_event {
             self.apply_dialog_event(&ctx, event);
         }
+
+        #[cfg(feature = "docs-shots")]
+        self.run_shots(&ctx);
 
         ctx.request_repaint_after(Duration::from_millis(16));
     }
