@@ -1,4 +1,4 @@
-//! Application state and the eframe update loop.
+//! Application state, the title bar and the eframe update loop.
 
 mod advanced_screen;
 mod main_screen;
@@ -6,19 +6,30 @@ mod menus;
 
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Context, Rect, Vec2, ViewportCommand};
+use eframe::egui::{
+    self, Align2, Color32, Context, CornerRadius, Id, LayerId, Pos2, Rect, Sense, Stroke,
+    StrokeKind, Ui, Vec2, ViewportCommand,
+};
 use windows::Win32::Foundation::HWND;
 
 use crate::dialogs::{Dialog, DialogEvent};
 use crate::engine::{ClickConfig, Engine};
 use crate::hotkeys::{Hotkeys, ID_PLAYBACK, ID_RECORD, ID_START_STOP};
+use crate::i18n::{self, Key, Lang};
 use crate::keys::key_name;
 use crate::native::{self, MouseButtonKind};
 use crate::record::Recorder;
 use crate::settings::{AppTheme, Settings};
-use crate::theme::{self, Palette};
+use crate::theme::{
+    self, ease_out, fade, font_caption, font_semibold, soft_circle, IconKind, Palette,
+};
+use crate::widgets;
 
-pub const BASE_TITLE: &str = "Simple Auto Clicker 3.1.1";
+pub const BASE_TITLE: &str = "Simple Auto Clicker";
+pub const WINDOW_WIDTH: f32 = 480.0;
+pub const WINDOW_HEIGHT: f32 = 640.0;
+/// Height of the custom title bar.
+pub const HEADER_HEIGHT: f32 = 64.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -29,10 +40,9 @@ pub enum Screen {
 #[derive(Clone, Copy)]
 pub enum Menu {
     Theme(Rect),
+    Language(Rect),
     Button(Rect),
     Type(Rect),
-    Options(Rect),
-    Help(Rect),
     More(Rect),
 }
 
@@ -46,13 +56,13 @@ pub struct App {
     pub settings: Settings,
     pub dark: bool,
     pub palette: Palette,
+    pub lang: Lang,
     pub screen: Screen,
 
     pub hwnd: Option<HWND>,
-    pub centered: bool,
+    pub started: bool,
     pub ever_started: bool,
     pub was_running: bool,
-    pub last_title: String,
 
     // Main screen inputs.
     pub hours: String,
@@ -72,8 +82,10 @@ pub struct App {
     pub hotkey_sync: HotkeySync,
 
     pub dialog: Option<Dialog>,
+    pub dialog_since: Option<Instant>,
     pub menu: Option<Menu>,
-    pub menu_fresh: bool,
+    pub menu_since: Instant,
+    pub screen_since: Instant,
 
     pub rec: Recorder,
     pub adv_keys_registered: bool,
@@ -91,6 +103,8 @@ impl App {
         };
         theme::apply_style(&cc.egui_ctx, &palette, dark);
 
+        let lang = settings.language.unwrap_or_else(Lang::detect);
+
         let hotkeys = Hotkeys::new();
         let mut hotkey_sync = HotkeySync {
             registered: false,
@@ -103,16 +117,17 @@ impl App {
             hotkey_sync.next_try = Some(Instant::now() + Duration::from_millis(250));
         }
 
+        let now = Instant::now();
         Self {
             settings,
             dark,
             palette,
+            lang,
             screen: Screen::Main,
             hwnd: None,
-            centered: false,
+            started: false,
             ever_started: false,
             was_running: false,
-            last_title: BASE_TITLE.to_string(),
             hours: "0".to_string(),
             mins: "0".to_string(),
             secs: "0".to_string(),
@@ -128,42 +143,28 @@ impl App {
             hotkeys,
             hotkey_sync,
             dialog: None,
+            dialog_since: None,
             menu: None,
-            menu_fresh: false,
+            menu_since: now,
+            screen_since: now,
             rec: Recorder::new(),
             adv_keys_registered: false,
         }
     }
 
+    pub fn tr(&self, key: Key) -> &'static str {
+        i18n::t(self.lang, key)
+    }
+
     // ------------------------------------------------------------ state polling
 
-    fn poll_state(&mut self, ctx: &Context) {
+    fn poll_state(&mut self) {
         let running = self.engine.is_running();
         if self.was_running && !running {
             self.ever_started = true;
         }
         self.was_running = running;
         let _ = self.engine.take_finished();
-
-        if self.dialog.is_none() {
-            let title = match self.screen {
-                Screen::Main => {
-                    if running {
-                        format!("Running - {BASE_TITLE}")
-                    } else if self.ever_started {
-                        format!("Stopped - {BASE_TITLE}")
-                    } else {
-                        BASE_TITLE.to_string()
-                    }
-                }
-                Screen::Advanced => "Simple Auto Clicker Advanced".to_string(),
-            };
-
-            if title != self.last_title {
-                ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
-                self.last_title = title;
-            }
-        }
 
         // The previous instance may still hold the key for a moment after a
         // restart, so retry a few times before giving up silently.
@@ -180,8 +181,7 @@ impl App {
                     self.hotkey_sync.attempts = 0;
                     self.hotkey_sync.next_try = None;
                 } else {
-                    self.hotkey_sync.next_try =
-                        Some(Instant::now() + Duration::from_millis(250));
+                    self.hotkey_sync.next_try = Some(Instant::now() + Duration::from_millis(250));
                 }
             }
         }
@@ -205,11 +205,7 @@ impl App {
             + read_number(&self.mins) as u64 * 60_000
             + read_number(&self.secs) as u64 * 1_000
             + read_number(&self.millis) as u64;
-        let interval_ms = if total == 0 {
-            1
-        } else {
-            total.min(u32::MAX as u64)
-        };
+        let interval_ms = if total == 0 { 1 } else { total.min(u32::MAX as u64) };
 
         ClickConfig {
             interval_ms,
@@ -275,8 +271,7 @@ impl App {
             self.open_dialog(
                 ctx,
                 Dialog::Info {
-                    text: "Could not start recording: the system did not allow the mouse hook."
-                        .to_string(),
+                    text: self.tr(Key::HookFailed).to_string(),
                     warning: true,
                 },
             );
@@ -310,7 +305,7 @@ impl App {
             self.open_dialog(
                 ctx,
                 Dialog::Info {
-                    text: "Record something first, using the Record button.".to_string(),
+                    text: self.tr(Key::NothingRecordedMessage).to_string(),
                     warning: false,
                 },
             );
@@ -359,19 +354,7 @@ impl App {
 
         self.screen = screen;
         self.menu = None;
-
-        let (size, title) = match screen {
-            Screen::Main => (Vec2::new(460.0, 510.0), BASE_TITLE.to_string()),
-            Screen::Advanced => (
-                Vec2::new(380.0, 220.0),
-                "Simple Auto Clicker Advanced".to_string(),
-            ),
-        };
-
-        ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
-        ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
-        self.last_title = title;
-        center_window(ctx, size);
+        self.screen_since = Instant::now();
     }
 
     fn register_advanced_hotkeys(&mut self) {
@@ -417,39 +400,23 @@ impl App {
         }
     }
 
+    fn set_language(&mut self, lang: Lang) {
+        if self.lang == lang {
+            return;
+        }
+        self.lang = lang;
+        self.settings.language = Some(lang);
+        self.settings.save();
+    }
+
     // ----------------------------------------------------------------- dialogs
 
     fn open_dialog(&mut self, ctx: &Context, dialog: Dialog) {
         self.menu = None;
-
-        // The Advanced screen is only 380x220 points, smaller than the dialogs.
-        // Grow the window to the dialog size plus a margin while it is open, so
-        // it reads as a modal instead of filling the whole window.
-        if self.screen == Screen::Advanced {
-            let size = dialog.size(ctx) + Vec2::splat(24.0);
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
-            ctx.send_viewport_cmd(ViewportCommand::Title(dialog.title().to_string()));
-            self.last_title = dialog.title().to_string();
-            center_window(ctx, size);
-        }
-
+        self.dialog_since = Some(Instant::now());
         self.dialog = Some(dialog);
         // Steals focus from any text field so typing goes to the dialog only.
         ctx.memory_mut(|m| m.request_focus(egui::Id::unique("dialog-input")));
-    }
-
-    /// Restores the window of the current screen after a dialog closed.
-    fn close_dialog(&mut self, ctx: &Context) {
-        if self.screen != Screen::Advanced {
-            return;
-        }
-        let size = Vec2::new(380.0, 220.0);
-        ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
-        ctx.send_viewport_cmd(ViewportCommand::Title(
-            "Simple Auto Clicker Advanced".to_string(),
-        ));
-        self.last_title = "Simple Auto Clicker Advanced".to_string();
-        center_window(ctx, size);
     }
 
     fn apply_dialog_event(&mut self, ctx: &Context, event: DialogEvent) {
@@ -482,10 +449,7 @@ impl App {
             _ => {}
         }
 
-        // Dialog is gone (or replaced by another one): restore the screen size.
-        if self.dialog.is_none() {
-            self.close_dialog(ctx);
-        }
+        self.dialog_since = None;
     }
 
     fn apply_start_hotkey(&mut self, ctx: &Context, value: u32) {
@@ -501,10 +465,7 @@ impl App {
             self.open_dialog(
                 ctx,
                 Dialog::Info {
-                    text: format!(
-                        "Could not assign {} - another program may already use this key.",
-                        key_name(value)
-                    ),
+                    text: i18n::hotkey_busy(self.lang, &key_name(value)),
                     warning: true,
                 },
             );
@@ -531,12 +492,207 @@ impl App {
             self.open_dialog(
                 ctx,
                 Dialog::Info {
-                    text: "Those hotkeys are already used by another program. The previous ones were kept."
-                        .to_string(),
+                    text: self.tr(Key::HotkeysBusy).to_string(),
                     warning: true,
                 },
             );
         }
+    }
+
+    // ------------------------------------------------------------------ chrome
+
+    fn startup(&mut self, ctx: &Context) {
+        if let Some(hwnd) = native::find_app_window() {
+            self.hwnd = Some(hwnd);
+            native::lock_size(hwnd);
+            native::round_corners(hwnd);
+            native::set_dark_title_bar(hwnd, self.dark);
+        } else {
+            self.hwnd = native::find_app_window();
+        }
+        center_window(ctx, Vec2::new(WINDOW_WIDTH, WINDOW_HEIGHT));
+        self.started = true;
+    }
+
+    /// Keeps the window exactly at its design size, even if something asks the
+    /// system to maximize it (the window has no maximize box to begin with).
+    fn enforce_size(&self, ctx: &Context) {
+        if self.hwnd.map(native::is_minimized).unwrap_or(false) {
+            return;
+        }
+        let size = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+        if let Some(size) = size {
+            if (size.x - WINDOW_WIDTH).abs() > 1.0 || (size.y - WINDOW_HEIGHT).abs() > 1.0 {
+                ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
+                    WINDOW_WIDTH,
+                    WINDOW_HEIGHT,
+                )));
+            }
+        }
+    }
+
+    fn paint_background(&self, ctx: &Context) {
+        let rect = ctx.viewport_rect();
+        let p = self.palette;
+        let painter = ctx.layer_painter(LayerId::background());
+
+        theme::vertical_gradient(&painter, rect, 18, p.bg_top, p.bg_bottom);
+
+        let time = ctx.input(|i| i.time) as f32;
+        let drift = Vec2::new((time * 0.22).sin() * 46.0, (time * 0.16).cos() * 30.0);
+        soft_circle(
+            &painter,
+            Pos2::new(110.0, 80.0) + drift,
+            280.0,
+            fade(p.accent, 0.20),
+        );
+        soft_circle(
+            &painter,
+            Pos2::new(430.0, 590.0) - drift,
+            300.0,
+            fade(p.accent2, 0.16),
+        );
+        soft_circle(
+            &painter,
+            Pos2::new(400.0, -60.0),
+            220.0,
+            fade(Color32::WHITE, 0.06),
+        );
+
+        painter.rect_stroke(
+            rect.shrink(0.5),
+            CornerRadius::same(18),
+            Stroke::new(1.0, fade(p.card_border, 0.9)),
+            StrokeKind::Inside,
+        );
+    }
+
+    fn status(&self) -> (&'static str, Color32) {
+        let p = self.palette;
+        if self.screen == Screen::Advanced {
+            if self.rec.recording {
+                (self.tr(Key::Recording), p.danger)
+            } else if self.rec.playing {
+                (self.tr(Key::Playing), p.green)
+            } else {
+                (self.tr(Key::Ready), p.muted)
+            }
+        } else if self.engine.is_running() {
+            (self.tr(Key::Running), p.green)
+        } else if self.ever_started {
+            (self.tr(Key::Stopped), p.muted)
+        } else {
+            (self.tr(Key::Ready), p.muted)
+        }
+    }
+
+    fn draw_header(&mut self, ctx: &Context, ui: &mut Ui) {
+        let p = self.palette;
+
+        // Drag region: buttons drawn afterwards sit on top of it.
+        let bar = Rect::from_min_size(Pos2::ZERO, Vec2::new(WINDOW_WIDTH, HEADER_HEIGHT));
+        let drag = ui.interact(bar, Id::unique("title-drag"), Sense::click_and_drag());
+        if drag.dragged() {
+            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+        }
+
+        let advanced = self.screen == Screen::Advanced;
+        if advanced {
+            let back_rect = Rect::from_min_size(Pos2::new(18.0, 16.0), Vec2::splat(32.0));
+            if widgets::icon_button(ui, back_rect, "nav-back", IconKind::ChevronLeft, 17.0, true, &p)
+                .on_hover_text(self.tr(Key::Back))
+                .clicked()
+            {
+                self.set_screen(ctx, Screen::Main);
+            }
+        } else {
+            let logo = Rect::from_min_size(Pos2::new(20.0, 16.0), Vec2::splat(32.0));
+            theme::vertical_gradient(ui.painter(), logo, 10, p.accent, p.accent2);
+            theme::draw_icon(
+                ui.painter(),
+                Rect::from_center_size(logo.center(), Vec2::splat(18.0)),
+                IconKind::Cursor,
+                p.on_accent,
+                p.accent,
+            );
+        }
+
+        let title = if advanced { self.tr(Key::Details) } else { BASE_TITLE };
+        let painter = ui.painter();
+        painter.text(
+            Pos2::new(64.0, 15.0),
+            Align2::LEFT_TOP,
+            title,
+            font_semibold(15.5),
+            p.ink,
+        );
+
+        // Status pill with a pulsing dot while the app is busy.
+        let (label, color) = self.status();
+        let galley = painter.layout_no_wrap(label.to_owned(), font_caption(), color);
+        let pill = Rect::from_min_size(
+            Pos2::new(64.0, 36.0),
+            Vec2::new(galley.size().x + 28.0, 20.0),
+        );
+        painter.rect_filled(pill, CornerRadius::same(10), fade(color, 0.11));
+        let busy = self.engine.is_running() || self.rec.recording || self.rec.playing;
+        let time = ctx.input(|i| i.time) as f32;
+        let pulse = if busy { 0.75 + 0.25 * (time * 3.4).sin() } else { 1.0 };
+        painter.circle_filled(
+            Pos2::new(pill.left() + 10.0, pill.center().y),
+            3.2 * pulse,
+            fade(color, pulse),
+        );
+        painter.galley(
+            Pos2::new(pill.left() + 17.0, pill.center().y - galley.size().y * 0.5),
+            galley,
+            color,
+        );
+
+        // Window buttons.
+        let size = 30.0;
+        let y = 17.0;
+        let close = Rect::from_min_size(Pos2::new(434.0, y), Vec2::splat(size));
+        let minimize = close.translate(Vec2::new(-34.0, 0.0));
+        let language = minimize.translate(Vec2::new(-34.0, 0.0));
+        let appearance = language.translate(Vec2::new(-34.0, 0.0));
+
+        let theme_icon = if self.dark { IconKind::Sun } else { IconKind::Moon };
+        if widgets::icon_button(ui, appearance, "win-theme", theme_icon, 15.0, true, &p)
+            .on_hover_text(self.tr(Key::TipTheme))
+            .clicked()
+        {
+            self.toggle_menu(Menu::Theme(appearance));
+        }
+
+        if widgets::icon_button(ui, language, "win-language", IconKind::Globe, 15.0, true, &p)
+            .on_hover_text(self.tr(Key::TipLanguage))
+            .clicked()
+        {
+            self.toggle_menu(Menu::Language(language));
+        }
+
+        if widgets::icon_button(ui, minimize, "win-min", IconKind::Minus, 15.0, true, &p)
+            .on_hover_text(self.tr(Key::TipMinimize))
+            .clicked()
+        {
+            ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+        }
+
+        if widgets::icon_button(ui, close, "win-close", IconKind::Close, 14.0, true, &p)
+            .on_hover_text(self.tr(Key::TipClose))
+            .clicked()
+        {
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
+
+        ui.painter().line_segment(
+            [
+                Pos2::new(20.0, HEADER_HEIGHT + 0.5),
+                Pos2::new(WINDOW_WIDTH - 20.0, HEADER_HEIGHT + 0.5),
+            ],
+            Stroke::new(1.0, fade(p.card_border, 0.9)),
+        );
     }
 }
 
@@ -565,7 +721,7 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(80));
 
-        self.poll_state(ctx);
+        self.poll_state();
         self.handle_hotkeys(ctx);
 
         let own_window = self.own_window();
@@ -579,58 +735,47 @@ impl eframe::App for App {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // Closing the Advanced screen returns to the main one, just like
-        // closing the separate window did in the previous build.
-        if self.screen == Screen::Advanced && ctx.input(|i| i.viewport().close_requested()) {
-            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-            self.set_screen(&ctx, Screen::Main);
+        if !self.started {
+            self.startup(&ctx);
         }
+        self.enforce_size(&ctx);
 
-        if self.hwnd.is_none() {
-            self.hwnd = native::find_app_window();
-            if let Some(hwnd) = self.hwnd {
-                native::set_dark_title_bar(hwnd, self.dark);
-            }
-        }
+        self.paint_background(&ctx);
 
-        if !self.centered {
-            center_window(&ctx, Vec2::new(460.0, 510.0));
-            self.centered = true;
-        }
-
-        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        let fade_in = ease_out(self.screen_since.elapsed().as_secs_f32() / 0.22);
         let enabled = self.dialog.is_none();
 
-        match self.screen {
-            Screen::Main => self.draw_main(&ctx, ui, enabled),
-            Screen::Advanced => {
-                if self.dialog.is_none() {
-                    self.draw_advanced(&ctx, ui, enabled);
-                }
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        ui.scope(|ui| {
+            ui.set_opacity(fade_in);
+            self.draw_header(&ctx, ui);
+            match self.screen {
+                Screen::Main => self.draw_main(&ctx, ui, enabled),
+                Screen::Advanced => self.draw_advanced(&ctx, ui, enabled),
             }
-        }
+        });
 
         self.draw_menu(&ctx);
 
         let mut dialog_event = None;
         if let Some(dialog) = self.dialog.as_mut() {
-            dialog_event = dialog.show(&ctx, &self.palette);
+            let appear = self
+                .dialog_since
+                .map(|since| ease_out(since.elapsed().as_secs_f32() / 0.20))
+                .unwrap_or(1.0);
+            dialog_event = dialog.show(&ctx, &self.palette, self.lang, appear);
         }
         if let Some(event) = dialog_event {
             self.apply_dialog_event(&ctx, event);
         }
+
+        ctx.request_repaint_after(Duration::from_millis(16));
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        let c = self.palette.bg;
-        [
-            c.r() as f32 / 255.0,
-            c.g() as f32 / 255.0,
-            c.b() as f32 / 255.0,
-            1.0,
-        ]
+        [0.0, 0.0, 0.0, 0.0]
     }
 }

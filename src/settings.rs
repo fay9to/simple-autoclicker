@@ -1,9 +1,10 @@
 //! Settings are stored in `%LOCALAPPDATA%\SimpleAutoClicker\settings.ini`.
-//! The format and keys match the previous C# build, so existing files keep
-//! working and deleting the file resets everything.
+//! Deleting the file resets everything to the defaults.
 
 use std::fs;
 use std::path::PathBuf;
+
+use crate::i18n::Lang;
 
 pub const VK_F6: u32 = 0x75;
 
@@ -36,6 +37,9 @@ impl AppTheme {
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub theme: AppTheme,
+    /// `None` until the settings file has been written once; the first launch
+    /// then follows the Windows UI language.
+    pub language: Option<Lang>,
     /// Virtual-key code for Start/Stop, F6 by default.
     pub hotkey: u32,
     pub playback_hotkey: u32,
@@ -48,6 +52,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: AppTheme::System,
+            language: None,
             hotkey: VK_F6,
             playback_hotkey: 0,
             record_hotkey: 0,
@@ -88,6 +93,11 @@ impl Settings {
                         settings.theme = theme;
                     }
                 }
+                "language" => {
+                    if let Some(lang) = Lang::parse(value) {
+                        settings.language = Some(lang);
+                    }
+                }
                 "hotkey" => {
                     if let Ok(vk) = value.parse::<u32>() {
                         settings.hotkey = vk;
@@ -120,9 +130,11 @@ impl Settings {
             return;
         }
 
+        let language = self.language.unwrap_or(Lang::En);
         let text = format!(
-            "theme={}\nhotkey={}\nplayback_hotkey={}\nrecord_hotkey={}\nminimize_when_playing={}\nminimize_when_recording={}\n",
+            "theme={}\nlanguage={}\nhotkey={}\nplayback_hotkey={}\nrecord_hotkey={}\nminimize_when_playing={}\nminimize_when_recording={}\n",
             self.theme.as_str(),
+            language.code(),
             self.hotkey,
             self.playback_hotkey,
             self.record_hotkey,

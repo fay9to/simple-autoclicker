@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{Context, Pos2, Rect, Ui, Vec2};
 
 use crate::dialogs::Dialog;
+use crate::i18n::{self, Key};
 use crate::keys::key_name;
 use crate::theme::IconKind;
 use crate::widgets::{self, BtnStyle};
@@ -20,58 +21,60 @@ impl App {
     pub(super) fn draw_main(&mut self, ctx: &Context, ui: &mut Ui, enabled: bool) {
         let p = self.palette;
 
-        widgets::card(ui.painter(), Rect::from_min_size(Pos2::new(16.0, 16.0), Vec2::new(428.0, 104.0)), "Click interval", &p);
-        widgets::card(ui.painter(), Rect::from_min_size(Pos2::new(16.0, 132.0), Vec2::new(206.0, 150.0)), "Click options", &p);
-        widgets::card(ui.painter(), Rect::from_min_size(Pos2::new(238.0, 132.0), Vec2::new(206.0, 150.0)), "Click repeat", &p);
-        widgets::card(ui.painter(), Rect::from_min_size(Pos2::new(16.0, 294.0), Vec2::new(428.0, 96.0)), "Cursor position", &p);
-
-        // ---- click interval fields ----
-        let fields = [
-            ("hours", 32.0, &mut self.hours),
-            ("mins", 134.0, &mut self.mins),
-            ("secs", 236.0, &mut self.secs),
-            ("milliseconds", 338.0, &mut self.millis),
-        ];
-        let captions = [
-            ("hours", 77.0),
-            ("mins", 179.0),
-            ("secs", 281.0),
-            ("milliseconds", 383.0),
-        ];
-        for (text, center) in captions {
-            widgets::caption(ui.painter(), Pos2::new(center, 62.0), text, &p);
-        }
-        for (key, x, value) in fields {
-            widgets::number_field(ui, rect(x, 74.0, 90.0, 34.0), key, value, enabled, &p);
-        }
-
-        // ---- theme button on the interval card ----
-        let theme_rect = rect(404.0, 24.0, 26.0, 26.0);
-        let icon = if self.dark { IconKind::Sun } else { IconKind::Moon };
-        let theme_response = widgets::button(
-            ui,
-            theme_rect,
-            "theme",
-            "",
-            BtnStyle::Ghost,
-            Some(icon),
-            15.0,
-            None,
-            enabled,
+        widgets::card(
+            ui.painter(),
+            rect(20.0, 78.0, 440.0, 112.0),
+            self.tr(Key::ClickInterval),
             &p,
         );
-        let theme_clicked = theme_response.clicked();
-        let _ = theme_response.on_hover_text("Appearance: system, light or dark");
-        if theme_clicked {
-            self.toggle_menu(Menu::Theme(theme_rect));
+        widgets::card(
+            ui.painter(),
+            rect(20.0, 202.0, 212.0, 172.0),
+            self.tr(Key::ClickOptions),
+            &p,
+        );
+        widgets::card(
+            ui.painter(),
+            rect(236.0, 202.0, 224.0, 172.0),
+            self.tr(Key::ClickRepeat),
+            &p,
+        );
+        widgets::card(
+            ui.painter(),
+            rect(20.0, 386.0, 440.0, 104.0),
+            self.tr(Key::CursorPosition),
+            &p,
+        );
+
+        // ---- click interval fields ----
+        for (key, center) in [
+            (Key::Hours, 82.5),
+            (Key::Mins, 187.5),
+            (Key::Secs, 292.5),
+            (Key::Millis, 397.5),
+        ] {
+            widgets::caption(ui.painter(), Pos2::new(center, 124.0), self.tr(key), &p);
         }
+        widgets::number_field(ui, rect(36.0, 136.0, 93.0, 36.0), "hours", &mut self.hours, enabled, &p);
+        widgets::number_field(ui, rect(141.0, 136.0, 93.0, 36.0), "mins", &mut self.mins, enabled, &p);
+        widgets::number_field(ui, rect(246.0, 136.0, 93.0, 36.0), "secs", &mut self.secs, enabled, &p);
+        widgets::number_field(ui, rect(351.0, 136.0, 93.0, 36.0), "millis", &mut self.millis, enabled, &p);
 
         // ---- click options ----
-        widgets::caption_left(ui.painter(), Pos2::new(30.0, 178.0), "Mouse button", &p);
-        let button_text = ["Left", "Right", "Middle"][self.button_idx.min(2)];
+        widgets::caption_left(
+            ui.painter(),
+            Pos2::new(36.0, 252.0),
+            self.tr(Key::MouseButton),
+            &p,
+        );
+        let button_text = [
+            self.tr(Key::Left),
+            self.tr(Key::Right),
+            self.tr(Key::Middle),
+        ][self.button_idx.min(2)];
         if widgets::select_field(
             ui,
-            rect(30.0, 188.0, 178.0, 32.0),
+            rect(36.0, 262.0, 180.0, 34.0),
             "button",
             button_text,
             matches!(self.menu, Some(Menu::Button(_))),
@@ -80,14 +83,23 @@ impl App {
         )
         .clicked()
         {
-            self.toggle_menu(Menu::Button(rect(30.0, 188.0, 178.0, 32.0)));
+            self.toggle_menu(Menu::Button(rect(36.0, 262.0, 180.0, 34.0)));
         }
 
-        widgets::caption_left(ui.painter(), Pos2::new(30.0, 236.0), "Click type", &p);
-        let type_text = if self.type_idx == 1 { "Double" } else { "Single" };
+        widgets::caption_left(
+            ui.painter(),
+            Pos2::new(36.0, 320.0),
+            self.tr(Key::ClickType),
+            &p,
+        );
+        let type_text = if self.type_idx == 1 {
+            self.tr(Key::Double)
+        } else {
+            self.tr(Key::Single)
+        };
         if widgets::select_field(
             ui,
-            rect(30.0, 246.0, 178.0, 32.0),
+            rect(36.0, 330.0, 180.0, 34.0),
             "type",
             type_text,
             matches!(self.menu, Some(Menu::Type(_))),
@@ -96,15 +108,15 @@ impl App {
         )
         .clicked()
         {
-            self.toggle_menu(Menu::Type(rect(30.0, 246.0, 178.0, 32.0)));
+            self.toggle_menu(Menu::Type(rect(36.0, 330.0, 180.0, 34.0)));
         }
 
         // ---- click repeat ----
         if widgets::radio(
             ui,
-            rect(252.0, 164.0, 120.0, 22.0),
+            rect(252.0, 248.0, 170.0, 22.0),
             "repeat",
-            "Repeat",
+            self.tr(Key::Repeat),
             !self.repeat_until_stopped,
             enabled,
             &p,
@@ -117,7 +129,7 @@ impl App {
         let spin_enabled = enabled && !self.repeat_until_stopped;
         let (_, delta) = widgets::spin_field(
             ui,
-            rect(252.0, 194.0, 84.0, 34.0),
+            rect(252.0, 280.0, 104.0, 36.0),
             "repeat-count",
             &mut self.repeat_text,
             spin_enabled,
@@ -128,13 +140,13 @@ impl App {
             let next = (current + delta as i64).clamp(1, 1_000_000);
             self.repeat_text = next.to_string();
         }
-        widgets::caption_left(ui.painter(), Pos2::new(342.0, 211.0), "times", &p);
+        widgets::caption_left(ui.painter(), Pos2::new(366.0, 298.0), self.tr(Key::Times), &p);
 
         if widgets::radio(
             ui,
-            rect(252.0, 240.0, 186.0, 22.0),
+            rect(252.0, 330.0, 196.0, 22.0),
             "until-stopped",
-            "Repeat until stopped",
+            self.tr(Key::UntilStopped),
             self.repeat_until_stopped,
             enabled,
             &p,
@@ -147,9 +159,9 @@ impl App {
         // ---- cursor position ----
         if widgets::radio(
             ui,
-            rect(30.0, 326.0, 170.0, 22.0),
+            rect(36.0, 430.0, 190.0, 22.0),
             "current",
-            "Current location",
+            self.tr(Key::CurrentLocation),
             !self.cursor_picked,
             enabled,
             &p,
@@ -161,7 +173,7 @@ impl App {
 
         if widgets::radio(
             ui,
-            rect(31.0, 358.0, 20.0, 22.0),
+            rect(36.0, 460.0, 20.0, 22.0),
             "picked",
             "",
             self.cursor_picked,
@@ -173,12 +185,12 @@ impl App {
             self.cursor_picked = true;
         }
 
-        let pick_rect = rect(57.0, 352.0, 132.0, 34.0);
+        let pick_rect = rect(64.0, 450.0, 142.0, 40.0);
         let pick_response = widgets::button(
             ui,
             pick_rect,
             "pick",
-            "Pick location",
+            self.tr(Key::PickLocation),
             BtnStyle::Ghost,
             Some(IconKind::Pick),
             16.0,
@@ -187,7 +199,7 @@ impl App {
             &p,
         );
         let pick_clicked = pick_response.clicked();
-        let _ = pick_response.on_hover_text("Capture the current cursor position");
+        let _ = pick_response.on_hover_text(self.tr(Key::TipPick));
         if pick_clicked {
             self.open_dialog(
                 ctx,
@@ -198,19 +210,19 @@ impl App {
             );
         }
 
-        widgets::caption_left(ui.painter(), Pos2::new(200.0, 370.0), "X", &p);
+        widgets::caption_left(ui.painter(), Pos2::new(222.0, 470.0), "X", &p);
         widgets::number_field(
             ui,
-            rect(216.0, 354.0, 58.0, 34.0),
+            rect(236.0, 452.0, 58.0, 36.0),
             "x",
             &mut self.x,
             enabled && self.cursor_picked,
             &p,
         );
-        widgets::caption_left(ui.painter(), Pos2::new(282.0, 370.0), "Y", &p);
+        widgets::caption_left(ui.painter(), Pos2::new(306.0, 470.0), "Y", &p);
         widgets::number_field(
             ui,
-            rect(298.0, 354.0, 58.0, 34.0),
+            rect(320.0, 452.0, 58.0, 36.0),
             "y",
             &mut self.y,
             enabled && self.cursor_picked,
@@ -220,16 +232,18 @@ impl App {
         // ---- bottom buttons ----
         let running = self.engine.is_running();
         let name = key_name(self.settings.hotkey);
+        let start_label = i18n::start_button(self.lang, &name);
+        let stop_label = i18n::stop_button(self.lang, &name);
 
         if widgets::button(
             ui,
-            rect(16.0, 404.0, 206.0, 44.0),
+            rect(20.0, 512.0, 214.0, 54.0),
             "start",
-            &format!("Start ({name})"),
-            BtnStyle::Primary,
-            None,
-            0.0,
-            None,
+            &start_label,
+            BtnStyle::Hero,
+            Some(IconKind::Play),
+            14.0,
+            Some(p.on_accent),
             enabled && !running,
             &p,
         )
@@ -240,12 +254,12 @@ impl App {
 
         if widgets::button(
             ui,
-            rect(238.0, 404.0, 206.0, 44.0),
+            rect(246.0, 512.0, 214.0, 54.0),
             "stop",
-            &format!("Stop ({name})"),
+            &stop_label,
             BtnStyle::Danger,
-            None,
-            0.0,
+            Some(IconKind::Stop),
+            13.0,
             None,
             enabled && running,
             &p,
@@ -257,9 +271,9 @@ impl App {
 
         if widgets::button(
             ui,
-            rect(16.0, 458.0, 206.0, 36.0),
+            rect(20.0, 580.0, 214.0, 40.0),
             "hotkey",
-            "Hotkey setting",
+            self.tr(Key::HotkeySetting),
             BtnStyle::Ghost,
             None,
             0.0,
@@ -275,9 +289,9 @@ impl App {
 
         if widgets::button(
             ui,
-            rect(238.0, 458.0, 206.0, 36.0),
+            rect(246.0, 580.0, 214.0, 40.0),
             "record",
-            "Record & Playback",
+            self.tr(Key::RecordPlayback),
             BtnStyle::Ghost,
             None,
             0.0,

@@ -1,8 +1,9 @@
-//! Advanced screen: record & playback of clicks and mouse movement.
+//! Record & playback screen.
 
 use eframe::egui::{Align2, Context, Pos2, Rect, Ui, Vec2};
 
-use crate::theme::{font_small, IconKind};
+use crate::i18n::Key;
+use crate::theme::{font_semibold, font_small, IconKind};
 use crate::widgets::{self, BtnStyle};
 
 use super::{App, Menu};
@@ -15,101 +16,166 @@ impl App {
     pub(super) fn draw_advanced(&mut self, ctx: &Context, ui: &mut Ui, enabled: bool) {
         let p = self.palette;
 
-        let options_rect = rect(14.0, 12.0, 74.0, 26.0);
-        if widgets::text_button(ui, options_rect, "options", "Options", enabled, &p).clicked() {
-            self.toggle_menu(Menu::Options(options_rect));
-        }
-
-        let help_rect = rect(94.0, 12.0, 50.0, 26.0);
-        if widgets::text_button(ui, help_rect, "help", "Help", enabled, &p).clicked() {
-            self.toggle_menu(Menu::Help(help_rect));
-        }
-
-        let hint = "Record clicks and mouse movement, then play them back to repeat the same sequence.";
-        let galley = ui.painter().layout(hint.to_string(), font_small(), p.muted, 344.0);
-        ui.painter().galley(
-            Pos2::new(18.0, 54.0 + (34.0 - galley.size().y).max(0.0) * 0.5),
-            galley,
-            p.muted,
-        );
+        let hint = self.tr(Key::RecordHint);
+        let galley = ui
+            .painter()
+            .layout(hint.to_string(), font_small(), p.muted, 440.0);
+        ui.painter()
+            .galley(Pos2::new(20.0, 78.0), galley, p.muted);
 
         let playing = self.rec.playing;
         let recording = self.rec.recording;
 
-        let play_rect = rect(24.0, 100.0, 104.0, 76.0);
-        let play_icon = if playing { IconKind::Stop } else { IconKind::Play };
-        let play_color = if playing { p.ink } else { p.green };
-        if widgets::button(
+        let play_rect = rect(20.0, 116.0, 214.0, 180.0);
+        let play = widgets::tile(
             ui,
             play_rect,
-            "play",
-            "",
-            BtnStyle::Secondary,
-            Some(play_icon),
-            26.0,
-            Some(play_color),
+            "play-tile",
+            if playing { IconKind::Stop } else { IconKind::Play },
+            if playing {
+                self.tr(Key::StopPlayback)
+            } else {
+                self.tr(Key::Playback)
+            },
+            self.tr(Key::PlaybackHint),
+            if playing { p.danger } else { p.green },
+            playing,
             enabled && !recording,
             &p,
-        )
-        .clicked()
-        {
+        );
+        if play.clicked() {
             self.toggle_playback(ctx);
         }
 
-        let record_rect = rect(138.0, 100.0, 104.0, 76.0);
-        let record_icon = if recording { IconKind::Stop } else { IconKind::Record };
-        let record_color = if recording { p.ink } else { p.danger };
-        if widgets::button(
+        let record_rect = rect(246.0, 116.0, 214.0, 180.0);
+        let record = widgets::tile(
             ui,
             record_rect,
-            "record-adv",
-            "",
-            BtnStyle::Secondary,
-            Some(record_icon),
-            24.0,
-            Some(record_color),
+            "record-tile",
+            if recording {
+                IconKind::Stop
+            } else {
+                IconKind::Record
+            },
+            if recording {
+                self.tr(Key::StopRecording)
+            } else {
+                self.tr(Key::Record)
+            },
+            self.tr(Key::RecordHintTile),
+            p.danger,
+            recording,
             enabled && !playing,
+            &p,
+        );
+        if record.clicked() {
+            self.toggle_recording(ctx);
+        }
+
+        // ---- recording details ----
+        widgets::card(
+            ui.painter(),
+            rect(20.0, 312.0, 440.0, 128.0),
+            self.tr(Key::Details),
+            &p,
+        );
+
+        let stats = [
+            (self.rec.click_count(), Key::Clicks),
+            (self.rec.move_count(), Key::Moves),
+            (self.rec.events.len(), Key::Events),
+        ];
+        for (index, (value, label)) in stats.iter().enumerate() {
+            let center = 105.0 + index as f32 * 135.0;
+            ui.painter().text(
+                Pos2::new(center, 372.0),
+                Align2::CENTER_CENTER,
+                value.to_string(),
+                font_semibold(25.0),
+                if *value > 0 { p.ink } else { p.muted },
+            );
+            ui.painter().text(
+                Pos2::new(center, 400.0),
+                Align2::CENTER_CENTER,
+                self.tr(*label),
+                font_small(),
+                p.muted,
+            );
+        }
+        if self.rec.events.is_empty() {
+            ui.painter().text(
+                Pos2::new(240.0, 424.0),
+                Align2::CENTER_CENTER,
+                self.tr(Key::NothingRecorded),
+                font_small(),
+                p.disabled_ink,
+            );
+        }
+
+        // ---- bottom buttons ----
+        let more_rect = rect(20.0, 456.0, 214.0, 44.0);
+        if widgets::button(
+            ui,
+            more_rect,
+            "more",
+            self.tr(Key::More),
+            BtnStyle::Ghost,
+            Some(IconKind::More),
+            14.0,
+            None,
+            enabled,
             &p,
         )
         .clicked()
         {
-            self.toggle_recording(ctx);
-        }
-
-        let more_rect = rect(252.0, 100.0, 104.0, 76.0);
-        let more_response = widgets::button(
-            ui,
-            more_rect,
-            "more",
-            "More",
-            BtnStyle::Secondary,
-            Some(IconKind::More),
-            14.0,
-            None,
-            enabled && !playing && !recording,
-            &p,
-        );
-        if more_response.clicked() {
             self.toggle_menu(Menu::More(more_rect));
         }
 
-        let status = if recording {
-            format!("Recording… events: {}", self.rec.events.len())
-        } else if playing {
-            "Playing back…".to_string()
-        } else {
-            format!(
-                "Recorded: {} clicks, {} move points",
-                self.rec.click_count(),
-                self.rec.move_count()
-            )
-        };
+        let can_clear = enabled && !recording && !playing && !self.rec.events.is_empty();
+        if widgets::button(
+            ui,
+            rect(246.0, 456.0, 214.0, 44.0),
+            "clear",
+            self.tr(Key::ClearRecording),
+            BtnStyle::Ghost,
+            None,
+            0.0,
+            None,
+            can_clear,
+            &p,
+        )
+        .clicked()
+        {
+            self.rec.events.clear();
+        }
 
-        ui.painter().text(
-            Pos2::new(24.0, 196.0),
-            Align2::LEFT_CENTER,
-            status,
-            font_small(),
+        if widgets::button(
+            ui,
+            rect(20.0, 516.0, 440.0, 44.0),
+            "back",
+            self.tr(Key::Back),
+            BtnStyle::Secondary,
+            Some(IconKind::ChevronLeft),
+            13.0,
+            None,
+            enabled,
+            &p,
+        )
+        .clicked()
+        {
+            self.set_screen(ctx, super::Screen::Main);
+        }
+
+        let tip = self.tr(Key::RecordingDetailsHint);
+        let galley = ui
+            .painter()
+            .layout(tip.to_string(), font_small(), p.muted, 420.0);
+        ui.painter().galley(
+            Pos2::new(
+                240.0 - galley.size().x * 0.5,
+                578.0 + (galley.size().y - 16.0) * 0.0,
+            ),
+            galley,
             p.muted,
         );
     }

@@ -7,6 +7,7 @@ mod dialogs;
 mod engine;
 mod hooks;
 mod hotkeys;
+mod i18n;
 mod keys;
 mod native;
 mod record;
@@ -22,11 +23,17 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(app::BASE_TITLE)
-            .with_inner_size([460.0, 510.0])
-            .with_min_inner_size([380.0, 220.0])
+            .with_inner_size([app::WINDOW_WIDTH, app::WINDOW_HEIGHT])
+            .with_min_inner_size([app::WINDOW_WIDTH, app::WINDOW_HEIGHT])
+            .with_max_inner_size([app::WINDOW_WIDTH, app::WINDOW_HEIGHT])
             .with_resizable(false)
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_maximize_button(false)
+            .with_minimize_button(false)
             .with_app_id("SimpleAutoClicker"),
         centered: true,
+        persist_window: false,
         ..Default::default()
     };
 

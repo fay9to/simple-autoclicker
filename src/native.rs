@@ -1,19 +1,21 @@
 //! Thin wrappers over the Win32 calls the app needs: synthetic mouse input,
-//! the cursor, window lookup for the dark title bar and recording filters.
+//! the cursor, finding our own window, locking its size and the DWM styling.
 
 use std::mem::size_of;
 
-use windows::core::w;
-use windows::Win32::Foundation::{HWND, POINT, RECT};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
     MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect, IsIconic, SetCursorPos,
-    SM_CXSCREEN, SM_CYSCREEN,
+    EnumWindows, GetCursorPos, GetSystemMetrics, GetWindowLongW, GetWindowRect,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetCursorPos, SetWindowLongW, GWL_STYLE,
+    SM_CXSCREEN, SM_CYSCREEN, WS_MAXIMIZEBOX, WS_THICKFRAME,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -105,22 +107,44 @@ pub fn send_button(button: MouseButtonKind, down: bool) {
     send(&[mouse_input(0, 0, if down { d } else { u })]);
 }
 
-/// Finds our own eframe window by its title.
-pub fn find_app_window() -> Option<HWND> {
-    for title in [
-        w!("Simple Auto Clicker 3.1.1"),
-        w!("Simple Auto Clicker Advanced"),
-        w!("Running - Simple Auto Clicker 3.1.1"),
-        w!("Stopped - Simple Auto Clicker 3.1.1"),
-    ] {
-        let hwnd = unsafe { FindWindowW(None, title) };
-        if let Ok(hwnd) = hwnd {
-            if !hwnd.is_invalid() {
-                return Some(hwnd);
-            }
-        }
+struct Search {
+    pid: u32,
+    found: HWND,
+}
+
+unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let search = &mut *(lparam.0 as *mut Search);
+    let mut pid = 0u32;
+    let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid != search.pid || !IsWindowVisible(hwnd).as_bool() {
+        return BOOL(1);
     }
-    None
+    let mut rect = RECT::default();
+    if GetWindowRect(hwnd, &mut rect).is_err() {
+        return BOOL(1);
+    }
+    if rect.right - rect.left < 100 {
+        return BOOL(1);
+    }
+    search.found = hwnd;
+    BOOL(0)
+}
+
+/// Finds our own top-level window by process id, so the window title can be
+/// anything without breaking recording filters or DWM tweaks.
+pub fn find_app_window() -> Option<HWND> {
+    let mut search = Search {
+        pid: unsafe { GetCurrentProcessId() },
+        found: HWND::default(),
+    };
+    unsafe {
+        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut search as *mut Search as isize));
+    }
+    if search.found.is_invalid() {
+        None
+    } else {
+        Some(search.found)
+    }
 }
 
 /// Screen rectangle of the window as `(left, top, right, bottom)`.
@@ -134,7 +158,17 @@ pub fn is_minimized(hwnd: HWND) -> bool {
     unsafe { IsIconic(hwnd).as_bool() }
 }
 
-/// Dark or light title bar, supported on Windows 10 1809+ and Windows 11.
+/// Removes the maximize and resize styles so the window stays exactly the size
+/// the app asks for, even through the system menu or Win+Up.
+pub fn lock_size(hwnd: HWND) {
+    unsafe {
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let style = style & !(WS_MAXIMIZEBOX.0 | WS_THICKFRAME.0);
+        SetWindowLongW(hwnd, GWL_STYLE, style as i32);
+    }
+}
+
+/// Dark or light title bar; supported on Windows 10 1809+ and Windows 11.
 pub fn set_dark_title_bar(hwnd: HWND, dark: bool) {
     let value: i32 = if dark { 1 } else { 0 };
     unsafe {
@@ -146,5 +180,19 @@ pub fn set_dark_title_bar(hwnd: HWND, dark: bool) {
             attribute = windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(19);
             let _ = DwmSetWindowAttribute(hwnd, attribute, ptr, bytes);
         }
+    }
+}
+
+/// Asks DWM for rounded window corners (Windows 11); older builds ignore it.
+pub fn round_corners(hwnd: HWND) {
+    let preference: i32 = 2; // DWMWCP_ROUND
+    let ptr = &preference as *const i32 as *const core::ffi::c_void;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(33),
+            ptr,
+            size_of::<i32>() as u32,
+        );
     }
 }

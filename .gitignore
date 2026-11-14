@@ -2,6 +2,7 @@
 target/
 bin/
 obj/
+build.log
 
 # Visual Studio / Rider
 .vs/
